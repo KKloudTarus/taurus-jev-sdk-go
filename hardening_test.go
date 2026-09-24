@@ -50,7 +50,7 @@ func TestErrorBodyIsRedactedAndBounded(t *testing.T) {
 	padding := strings.Repeat("x", 9000)
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"error":"quota exhausted","echo":"%s","pad":"%s"}`,
+		_, _ = fmt.Fprintf(w, `{"error":"quota exhausted","echo":"%s","pad":"%s"}`,
 			r.Header.Get(headerAuthorization), padding)
 	})
 	_, err := client.SystemOne(context.Background(), "x", Questions{"q": Noul{}})
@@ -77,7 +77,7 @@ func TestErrorBodyIsRedactedAndBounded(t *testing.T) {
 
 func TestAuthorizationIsNotResentOnRedirect(t *testing.T) {
 	var secondCalls int
-	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	second := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		secondCalls++
 		t.Errorf("the redirect target was reached with Authorization=%q", r.Header.Get(headerAuthorization))
 	}))
@@ -177,7 +177,7 @@ func TestDefaultTimeoutIsApplied(t *testing.T) {
 func TestDeadlineDuringRetryReportsATimeout(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
@@ -216,7 +216,7 @@ func TestDeadlineDuringRetryReportsATimeout(t *testing.T) {
 }
 
 func TestCancellationIsNotReportedAsATimeout(t *testing.T) {
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}, WithRetry(DefaultRetry()))
 
@@ -280,7 +280,7 @@ func TestConnectionFailuresAreRetriedTheConfiguredNumberOfTimes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	var mu sync.Mutex
 	connections := 0
@@ -293,7 +293,7 @@ func TestConnectionFailuresAreRetriedTheConfiguredNumberOfTimes(t *testing.T) {
 			mu.Lock()
 			connections++
 			mu.Unlock()
-			conn.Close() // Accept, then reset, so every attempt is a transport failure.
+			_ = conn.Close() // Accept, then reset, so every attempt is a transport failure.
 		}
 	}()
 
@@ -320,7 +320,7 @@ func TestConnectionFailuresAreNotRetriedWhenDisabled(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 	address := listener.Addr().String()
-	listener.Close() // Nothing is listening.
+	_ = listener.Close() // Nothing is listening.
 
 	client, err := New(WithAPIKey(testKey), WithBaseURL("http://"+address),
 		WithRetry(RetryPolicy{MaxRetries: 3, RetryConnection: false}))
@@ -382,9 +382,9 @@ func TestDegradedResponsesAreRejected(t *testing.T) {
 		{"missing noul", `{"model":"m",` + usage + `,"answers":{"spam":{"type":"noul"}}}`, "answers.spam.noul"},
 	}
 	for _, testCase := range cases {
-		client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set(headerRequestID, "req_bad")
-			io.WriteString(w, testCase.body)
+			_, _ = io.WriteString(w, testCase.body)
 		})
 		_, err := client.SystemOne(context.Background(), "x", Questions{"spam": Noul{}})
 		if !errors.Is(err, ErrInvalidResponse) {
@@ -407,8 +407,8 @@ func TestDegradedResponsesAreRejected(t *testing.T) {
 
 func TestModelsRejectsADegradedBody(t *testing.T) {
 	for _, body := range []string{`null`, `{}`, `{"models":null}`} {
-		client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			io.WriteString(w, body)
+		client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
 		})
 		models, err := client.Models(context.Background())
 		if !errors.Is(err, ErrInvalidResponse) {
@@ -416,8 +416,8 @@ func TestModelsRejectsADegradedBody(t *testing.T) {
 		}
 	}
 	// An account with no models is a legitimate empty list, not an error.
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"models":[]}`)
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"models":[]}`)
 	})
 	models, err := client.Models(context.Background())
 	if err != nil || len(models) != 0 {
@@ -426,7 +426,7 @@ func TestModelsRejectsADegradedBody(t *testing.T) {
 }
 
 func TestModelsRejectsOptionsItCannotHonor(t *testing.T) {
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("a request was sent despite an unusable option")
 	})
 	for _, option := range []CallOption{UsingExtraBody(map[string]any{"x": 1}), UsingModel("nope")} {
@@ -463,7 +463,7 @@ func TestResponseCarriesTransportMetadata(t *testing.T) {
 // --- input validation -------------------------------------------------------
 
 func TestTypedNilStateIsRejected(t *testing.T) {
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("a nil state reached the server")
 	})
 	var nilMap map[string]any
@@ -481,7 +481,7 @@ func TestRawQuestionReachesTheWire(t *testing.T) {
 		payload, _ := io.ReadAll(r.Body)
 		decodeJSON(t, payload, &body)
 		w.Header().Set(headerRequestID, "req_1")
-		io.WriteString(w, `{"model":"m","usage":{"input_tokens":1,"output_tokens":1},
+		_, _ = io.WriteString(w, `{"model":"m","usage":{"input_tokens":1,"output_tokens":1},
 			"answers":{"q":{"type":"rank","rank":3}}}`)
 	})
 	response, err := client.SystemOne(context.Background(), "x", Questions{

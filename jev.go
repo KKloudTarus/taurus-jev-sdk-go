@@ -511,7 +511,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, body []byte, 
 	if err != nil {
 		return responseMeta{}, policy.RetryConnection && ctx.Err() == nil, c.connectionError(endpoint, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	// One byte past the cap distinguishes a truncated body from an exact fit.
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBody+1))

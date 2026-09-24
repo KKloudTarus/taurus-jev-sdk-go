@@ -41,7 +41,7 @@ func decodeJSON(t *testing.T, payload []byte, out any) {
 
 func answerHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set(headerRequestID, "req_123")
-	io.WriteString(w, answersPayload)
+	_, _ = io.WriteString(w, answersPayload)
 }
 
 func TestNewAppliesEnvironmentThenOptions(t *testing.T) {
@@ -101,7 +101,7 @@ func TestSystemOneSendsTheDocumentedRequest(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		request = r
 		payload, _ := io.ReadAll(r.Body)
-		json.Unmarshal(payload, &body)
+		decodeJSON(t, payload, &body)
 		answerHandler(w, r)
 	})
 
@@ -164,7 +164,7 @@ func TestCallOptionsOverrideTheClient(t *testing.T) {
 	var header string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
-		json.Unmarshal(payload, &body)
+		decodeJSON(t, payload, &body)
 		header = r.Header.Get("X-Tenant")
 		answerHandler(w, r)
 	}, WithHeader("X-Tenant", "client-level"))
@@ -250,7 +250,7 @@ func TestRetriesRateLimitAndHonorsRetryAfter(t *testing.T) {
 		if attempt == 1 {
 			w.Header().Set(headerRetryAfterMS, "10")
 			w.WriteHeader(http.StatusTooManyRequests)
-			io.WriteString(w, `{"error": "slow down"}`)
+			_, _ = io.WriteString(w, `{"error": "slow down"}`)
 			return
 		}
 		if got := r.Header.Get(headerRetryCount); got != "1" {
@@ -274,10 +274,10 @@ func TestRetriesRateLimitAndHonorsRetryAfter(t *testing.T) {
 
 func TestNoRetryOnClientError(t *testing.T) {
 	calls := 0
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		io.WriteString(w, `{"detail": [{"loc": ["body", "questions", "q", "criteria"], "msg": "Field required"}]}`)
+		_, _ = io.WriteString(w, `{"detail": [{"loc": ["body", "questions", "q", "criteria"], "msg": "Field required"}]}`)
 	}, WithRetry(DefaultRetry()))
 
 	_, err := client.SystemOne(context.Background(), "x", Questions{"q": Noul{}})
@@ -301,7 +301,7 @@ func TestNoRetryOnClientError(t *testing.T) {
 
 func TestRetriesAreBounded(t *testing.T) {
 	calls := 0
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}, WithRetry(RetryPolicy{MaxRetries: 2, RetryStatus: RetryableStatus}))
@@ -316,7 +316,7 @@ func TestRetriesAreBounded(t *testing.T) {
 
 func TestRetryStopsAtTheBudget(t *testing.T) {
 	calls := 0
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.Header().Set(headerRetryAfter, "30")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -361,7 +361,7 @@ func TestConnectionFailureIsTypedAndRetried(t *testing.T) {
 }
 
 func TestPerCallTimeoutIsTyped(t *testing.T) {
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(_ http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 		case <-time.After(2 * time.Second):
@@ -377,7 +377,7 @@ func TestPerCallTimeoutIsTyped(t *testing.T) {
 }
 
 func TestContextCancellationStopsRetries(t *testing.T) {
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(headerRetryAfter, "60")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}, WithRetry(RetryPolicy{MaxRetries: 5, RetryStatus: RetryableStatus}))
@@ -397,7 +397,7 @@ func TestCredentialIsRedactedFromErrors(t *testing.T) {
 	// Some gateways echo the request headers back in an error body.
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error": "rejected header Authorization: `+r.Header.Get(headerAuthorization)+`"}`)
+		_, _ = io.WriteString(w, `{"error": "rejected header Authorization: `+r.Header.Get(headerAuthorization)+`"}`)
 	})
 	_, err := client.SystemOne(context.Background(), "x", Questions{"q": Noul{}})
 	if err == nil {
@@ -412,9 +412,9 @@ func TestCredentialIsRedactedFromErrors(t *testing.T) {
 }
 
 func TestMalformedSuccessBody(t *testing.T) {
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(headerRequestID, "req_bad")
-		io.WriteString(w, `{"answers": "not an object"}`)
+		_, _ = io.WriteString(w, `{"answers": "not an object"}`)
 	})
 	_, err := client.SystemOne(context.Background(), "x", Questions{"q": Noul{}})
 	if !errors.Is(err, ErrInvalidResponse) {
@@ -436,7 +436,7 @@ func TestModels(t *testing.T) {
 		if r.Header.Get(headerContentType) != "" {
 			t.Error("a GET request carried a Content-Type")
 		}
-		io.WriteString(w, `{"models": [{"name": "jev-latest", "description": "General-purpose.", "release_date": "2026-09-15"}]}`)
+		_, _ = io.WriteString(w, `{"models": [{"name": "jev-latest", "description": "General-purpose.", "release_date": "2026-09-15"}]}`)
 	})
 	models, err := client.Models(context.Background())
 	if err != nil {
