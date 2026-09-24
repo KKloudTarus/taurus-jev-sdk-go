@@ -1,0 +1,14 @@
+# Build output
+/dist/
+*.test
+*.out
+
+# Agent config
+.claude/
+CLAUDE.md
+AGENTS.md
+.mcp.json
+
+# Editors
+.idea/
+.vscode/
