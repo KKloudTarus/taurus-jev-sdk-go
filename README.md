@@ -2,7 +2,6 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/KKloudTarus/taurus-jev-sdk-go.svg)](https://pkg.go.dev/github.com/KKloudTarus/taurus-jev-sdk-go)
 [![CI](https://github.com/KKloudTarus/taurus-jev-sdk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/KKloudTarus/taurus-jev-sdk-go/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/KKloudTarus/taurus-jev-sdk-go)](https://goreportcard.com/report/github.com/KKloudTarus/taurus-jev-sdk-go)
 [![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://go.dev/dl/)
 [![License MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
