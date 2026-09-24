@@ -54,16 +54,52 @@ func TestBackoffDisabled(t *testing.T) {
 func TestDelayForHonorsRetryAfter(t *testing.T) {
 	policy := DefaultRetry()
 	err := error(&APIError{Status: 429, RetryAfter: 2 * time.Second})
+	// The server's wait is honored, minus jitter of at most Jitter.
+	floor := time.Duration(float64(2*time.Second) * (1 - policy.Jitter))
 	delay, within := policy.delayFor(0, err, 0)
-	if !within || delay != 2*time.Second {
-		t.Errorf("delay = %v, within = %v; want the server's 2s", delay, within)
+	if !within || delay > 2*time.Second || delay < floor {
+		t.Errorf("delay = %v, within = %v; want [%v, 2s]", delay, within, floor)
 	}
 
 	ignoring := policy
 	ignoring.RespectRetryAfter = false
 	delay, _ = ignoring.delayFor(0, err, 0)
-	if delay == 2*time.Second {
-		t.Error("retry-after was honored despite RespectRetryAfter=false")
+	if delay > time.Second {
+		t.Errorf("delay = %v; retry-after was honored despite RespectRetryAfter=false", delay)
+	}
+}
+
+func TestRetryAfterIsClampedAndJittered(t *testing.T) {
+	policy := RetryPolicy{MaxBackoff: 50 * time.Millisecond, InitialBackoff: 10 * time.Millisecond,
+		Jitter: 0.25, RespectRetryAfter: true, RetryStatus: RetryableStatus}
+	// A hostile or misconfigured server must not be able to pin the caller.
+	err := error(&APIError{Status: 429, RetryAfter: time.Hour})
+	delay, within := policy.delayFor(0, err, 0)
+	if !within || delay > policy.MaxBackoff {
+		t.Errorf("delay = %v, want at most MaxBackoff %v", delay, policy.MaxBackoff)
+	}
+
+	// Callers handed the same retry-after must not wake in lockstep.
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 50; i++ {
+		d, _ := policy.delayFor(0, error(&APIError{Status: 429, RetryAfter: 40 * time.Millisecond}), 0)
+		seen[d] = true
+	}
+	if len(seen) < 10 {
+		t.Errorf("only %d distinct delays across 50 draws; retry-after is not jittered", len(seen))
+	}
+}
+
+func TestHotRetryLoopIsRejected(t *testing.T) {
+	// InitialBackoff without MaxBackoff used to retry as fast as the network
+	// allowed: four requests in under 2ms.
+	policy := RetryPolicy{MaxRetries: 3, RetryStatus: RetryableStatus, InitialBackoff: 200 * time.Millisecond}
+	if err := policy.validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("err = %v, want ErrInvalidConfig", err)
+	}
+	inverted := RetryPolicy{InitialBackoff: 2 * time.Second, MaxBackoff: time.Second}
+	if err := inverted.validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("err = %v, want ErrInvalidConfig", err)
 	}
 }
 

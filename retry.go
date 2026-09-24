@@ -17,9 +17,12 @@ type RetryPolicy struct {
 	// InitialBackoff is the first delay, doubled each attempt up to MaxBackoff.
 	// Zero disables backoff.
 	InitialBackoff time.Duration
-	// MaxBackoff caps the delay between attempts.
+	// MaxBackoff caps every delay between attempts, including one a server asks
+	// for through retry-after. Zero disables backoff.
 	MaxBackoff time.Duration
-	// Jitter is the fraction of each delay randomly subtracted, from 0 to 1.
+	// Jitter is the fraction of each delay randomly subtracted, from 0 to 1. It
+	// applies to a server-supplied wait as well, so callers that received the
+	// same retry-after do not wake at the same instant.
 	Jitter float64
 	// Budget is the total wall-clock allowance for one call including delays.
 	// Zero disables the limit. An attempt is not started when the delay before
@@ -28,8 +31,8 @@ type RetryPolicy struct {
 	// RetryStatus reports whether a status code should be retried. Nil retries
 	// no status.
 	RetryStatus func(status int) bool
-	// RespectRetryAfter honors the retry-after and retry-after-ms headers in
-	// place of the computed backoff.
+	// RespectRetryAfter honors the retry-after and retry-after-ms headers,
+	// clamped by MaxBackoff and jittered.
 	RespectRetryAfter bool
 	// RetryConnection retries a request that produced no HTTP response.
 	RetryConnection bool
@@ -75,6 +78,13 @@ func (p RetryPolicy) validate() error {
 	if p.Jitter < 0 || p.Jitter > 1 {
 		return fmt.Errorf("%w: Jitter must be between 0 and 1", ErrInvalidConfig)
 	}
+	// Without this check the pair below retries as fast as the network allows.
+	if p.InitialBackoff > 0 && p.MaxBackoff == 0 {
+		return fmt.Errorf("%w: MaxBackoff must be set when InitialBackoff is", ErrInvalidConfig)
+	}
+	if p.MaxBackoff > 0 && p.InitialBackoff > p.MaxBackoff {
+		return fmt.Errorf("%w: InitialBackoff must not exceed MaxBackoff", ErrInvalidConfig)
+	}
 	return nil
 }
 
@@ -85,11 +95,16 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 		return 0
 	}
 	delay := float64(p.InitialBackoff) * math.Pow(2, float64(attempt))
-	delay = math.Min(delay, float64(p.MaxBackoff))
-	if p.Jitter > 0 {
-		delay *= 1 - rand.Float64()*p.Jitter //nolint:gosec // Backoff jitter, not cryptography.
+	return p.jitter(time.Duration(math.Min(delay, float64(p.MaxBackoff))))
+}
+
+// jitter subtracts a random fraction of the delay, so a fleet that failed
+// together does not retry together.
+func (p RetryPolicy) jitter(delay time.Duration) time.Duration {
+	if p.Jitter <= 0 || delay <= 0 {
+		return delay
 	}
-	return time.Duration(delay)
+	return time.Duration(float64(delay) * (1 - rand.Float64()*p.Jitter)) //nolint:gosec // Backoff jitter, not cryptography.
 }
 
 // delayFor returns the wait before the next attempt and whether that attempt
@@ -99,7 +114,14 @@ func (p RetryPolicy) delayFor(attempt int, err error, elapsed time.Duration) (ti
 	if p.RespectRetryAfter {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 {
-			delay = apiErr.RetryAfter
+			// A server-supplied wait is still bounded by MaxBackoff, so a
+			// hostile or misconfigured upstream cannot pin the caller's
+			// goroutine, and it is jittered so a fleet does not wake in lockstep.
+			requested := apiErr.RetryAfter
+			if p.MaxBackoff > 0 {
+				requested = min(requested, p.MaxBackoff)
+			}
+			delay = p.jitter(requested)
 		}
 	}
 	if p.Budget > 0 && elapsed+delay >= p.Budget {
