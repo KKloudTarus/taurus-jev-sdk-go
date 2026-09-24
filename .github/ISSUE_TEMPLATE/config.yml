@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: TypeSafe AI API documentation
+    url: https://docs.typesafe.ai
+    about: Questions about the API itself, its models, pricing or limits.
+  - name: Security report
+    url: https://github.com/KKloudTarus/taurus-jev-sdk-go/security/advisories/new
+    about: Report a vulnerability privately rather than in a public issue.

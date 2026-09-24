@@ -1,0 +1,44 @@
+name: Bug report
+description: Something the client does that it should not
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste an API key, an `Authorization` header, or a full
+        response body that may contain one. A request ID is enough to identify a
+        call.
+  - type: input
+    id: version
+    attributes:
+      label: SDK version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: go
+    attributes:
+      label: Go version
+      placeholder: go version go1.23.0 linux/amd64
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what the client did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest program or test that shows it.
+      render: go
+    validations:
+      required: true
+  - type: input
+    id: request-id
+    attributes:
+      label: Request ID
+      description: From `response.RequestID`, or from the error's `RequestID` field.

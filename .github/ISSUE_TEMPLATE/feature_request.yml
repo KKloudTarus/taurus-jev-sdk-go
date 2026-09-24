@@ -1,0 +1,23 @@
+name: Feature request
+description: Something the client should be able to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where the client gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: The signature or option you have in mind, if you have one.
+      render: go
+  - type: checkboxes
+    id: api-support
+    attributes:
+      label: API support
+      options:
+        - label: This is reachable today through `UsingExtraBody`, `RawQuestion` or `SystemOneAs`
