@@ -3,6 +3,7 @@ package jev
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -107,15 +108,37 @@ func TestQuestionsValidate(t *testing.T) {
 	}
 }
 
-func TestChoiceCardinalityLimit(t *testing.T) {
-	criteria := make(map[string]any, maxChoices+1)
-	for i := 0; i <= maxChoices; i++ {
-		criteria[string(rune('a'+i%26))+string(rune('a'+i/26))] = nil
+func TestLargeChoiceCriteriaAreSent(t *testing.T) {
+	// openapi.json sets no maxProperties on choice criteria, so the client must
+	// not impose one of its own. A server-side limit is the server's to report.
+	criteria := make(map[string]any, 300)
+	for i := 0; i < 300; i++ {
+		criteria[fmt.Sprintf("label%d", i)] = nil
 	}
-	if len(criteria) <= maxChoices {
-		t.Fatalf("fixture built %d labels, need more than %d", len(criteria), maxChoices)
+	question := Choice{Criteria: criteria}
+	if err := question.validate("tone"); err != nil {
+		t.Fatalf("validate rejected %d labels: %v", len(criteria), err)
 	}
-	if err := (Choice{Criteria: criteria}).validate("tone"); err == nil {
-		t.Error("accepted more than 255 labels")
+	if got := marshalQuestion(t, question)["criteria"].(map[string]any); len(got) != 300 {
+		t.Errorf("serialized %d labels, want 300", len(got))
+	}
+}
+
+func TestRawQuestion(t *testing.T) {
+	question := RawQuestion{Type: "rank", Fields: map[string]any{"instructions": "?", "depth": 3}}
+	if err := question.validate("q"); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	encoded := marshalQuestion(t, question)
+	if encoded["type"] != "rank" || encoded["instructions"] != "?" || encoded["depth"] != float64(3) {
+		t.Errorf("encoded = %v", encoded)
+	}
+	// Type wins over a colliding key, so the discriminator cannot be spoofed.
+	collide := marshalQuestion(t, RawQuestion{Type: "rank", Fields: map[string]any{"type": "noul"}})
+	if collide["type"] != "rank" {
+		t.Errorf("type = %v, want rank", collide["type"])
+	}
+	if err := (RawQuestion{}).validate("q"); err == nil {
+		t.Error("a raw question with no type was accepted")
 	}
 }
