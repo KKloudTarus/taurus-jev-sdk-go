@@ -47,6 +47,9 @@ type ChoiceAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
+// UnmarshalJSON rejects a payload missing any required field, so an absent
+// label or confidence is reported rather than decoded as an empty string or a
+// zero probability.
 func (a *ChoiceAnswer) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Choice        *string            `json:"choice"`
@@ -84,6 +87,8 @@ type ScoreAnswer struct {
 	Probabilities map[int]float64 `json:"probabilities"`
 }
 
+// UnmarshalJSON rejects a payload missing any required field, so an absent
+// score or rubric is reported rather than decoded as zero.
 func (a *ScoreAnswer) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Score         *float64        `json:"score"`
@@ -149,6 +154,10 @@ func (a Answer) MarshalJSON() ([]byte, error) {
 	return a.Raw, nil
 }
 
+// UnmarshalJSON selects the variant named by the type discriminator. A type
+// this version does not model keeps its bytes in Raw; a malformed payload is
+// recorded and reported by the enclosing response, which knows the question
+// name.
 func (a *Answer) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || trimmed[0] != '{' {

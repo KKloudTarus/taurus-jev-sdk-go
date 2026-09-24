@@ -76,6 +76,8 @@ func (q Choice) validate(name string) error {
 	return nil
 }
 
+// MarshalJSON builds the wire object by hand so an unset field is absent rather
+// than null, while a nil description inside Criteria stays an explicit null.
 func (q Choice) MarshalJSON() ([]byte, error) {
 	body := map[string]any{"type": q.questionType(), "criteria": q.Criteria}
 	if q.Instructions != nil {
@@ -104,6 +106,8 @@ func (q Score) validate(name string) error {
 	return nil
 }
 
+// MarshalJSON builds the wire object by hand so an unset field is absent rather
+// than null.
 func (q Score) MarshalJSON() ([]byte, error) {
 	body := map[string]any{"type": q.questionType(), "criteria": q.Criteria}
 	if q.Instructions != nil {
@@ -134,6 +138,8 @@ func (q RawQuestion) validate(name string) error {
 	return nil
 }
 
+// MarshalJSON writes Fields verbatim with Type as the discriminator. A "type"
+// key in Fields is ignored, so the discriminator cannot be overwritten.
 func (q RawQuestion) MarshalJSON() ([]byte, error) {
 	body := make(map[string]any, len(q.Fields)+1)
 	for key, value := range q.Fields {

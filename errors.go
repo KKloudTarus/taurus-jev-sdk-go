@@ -142,6 +142,7 @@ func (e *ResponseValidationError) Error() string {
 	return message
 }
 
+// Is reports whether the target is [ErrInvalidResponse].
 func (e *ResponseValidationError) Is(target error) bool { return target == ErrInvalidResponse }
 
 // fieldError names a response field that is missing or the wrong shape. It
@@ -203,6 +204,8 @@ func (e *ConnectionError) Unwrap() error {
 	return e.sanitized
 }
 
+// Is reports whether the target is [ErrConnection], or [ErrTimeout] when the
+// failure was a deadline.
 func (e *ConnectionError) Is(target error) bool {
 	switch target {
 	case ErrConnection:
