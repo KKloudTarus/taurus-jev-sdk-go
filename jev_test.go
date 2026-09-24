@@ -32,6 +32,13 @@ func newTestClient(t *testing.T, handler http.HandlerFunc, options ...Option) *C
 	return client
 }
 
+func decodeJSON(t *testing.T, payload []byte, out any) {
+	t.Helper()
+	if err := json.Unmarshal(payload, out); err != nil {
+		t.Fatalf("decoding %s: %v", payload, err)
+	}
+}
+
 func answerHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set(headerRequestID, "req_123")
 	io.WriteString(w, answersPayload)

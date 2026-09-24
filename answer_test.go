@@ -85,9 +85,94 @@ func TestUnknownAnswerTypeSurvives(t *testing.T) {
 	}
 }
 
-func TestAnswerRejectsNonObject(t *testing.T) {
-	var answer Answer
-	if err := json.Unmarshal([]byte(`"not an object"`), &answer); err == nil {
-		t.Error("a scalar answer was accepted")
+func TestResponseRejectsNonObjectAnswer(t *testing.T) {
+	// A null or scalar answer is a broken payload. It must not be mistaken for
+	// a forward-compatible answer type, which also reports Known() == false.
+	for _, payload := range []string{
+		`{"model":"m","usage":{"input_tokens":1,"output_tokens":1},"answers":{"q":null}}`,
+		`{"model":"m","usage":{"input_tokens":1,"output_tokens":1},"answers":{"q":"scalar"}}`,
+	} {
+		var response SystemOneResponse
+		err := json.Unmarshal([]byte(payload), &response)
+		if err == nil {
+			t.Errorf("%s: accepted", payload)
+			continue
+		}
+		var field *fieldError
+		if !asFieldError(err, &field) || field.path != "answers.q" {
+			t.Errorf("%s: err = %v, want a field error at answers.q", payload, err)
+		}
+	}
+}
+
+func TestResponseRejectsMissingRequiredFields(t *testing.T) {
+	usage := `"usage":{"input_tokens":1,"output_tokens":1}`
+	cases := []struct {
+		payload string
+		want    string
+	}{
+		// A missing noul decodes to 0.0 in a plain float, which reads as a
+		// maximally confident no. It has to be an error instead.
+		{`{"model":"m",` + usage + `,"answers":{"spam":{"type":"noul"}}}`, "answers.spam.noul"},
+		{`{"model":"m",` + usage + `,"answers":{"t":{"type":"choice","confidence":0.9,"probabilities":{}}}}`, "answers.t.choice"},
+		{`{"model":"m",` + usage + `,"answers":{"t":{"type":"choice","choice":"a","probabilities":{}}}}`, "answers.t.confidence"},
+		{`{"model":"m",` + usage + `,"answers":{"t":{"type":"choice","choice":"a","confidence":0.9}}}`, "answers.t.probabilities"},
+		{`{"model":"m",` + usage + `,"answers":{"u":{"type":"score","confidence":0.9,"legend":{},"probabilities":{}}}}`, "answers.u.score"},
+		{`{"model":"m",` + usage + `,"answers":{"u":{"type":"score","score":1,"confidence":0.9,"probabilities":{}}}}`, "answers.u.legend"},
+		{`{"model":"m",` + usage + `,"answers":{"q":{"noul":0.5}}}`, "answers.q.type"},
+		{`{` + usage + `,"answers":{"q":{"type":"noul","noul":0.5}}}`, "model"},
+		{`{"model":"m",` + usage + `}`, "answers"},
+		{`{"model":"m",` + usage + `,"answers":{}}`, "answers"},
+		{`{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`, "usage"},
+	}
+	for _, testCase := range cases {
+		var response SystemOneResponse
+		err := json.Unmarshal([]byte(testCase.payload), &response)
+		var field *fieldError
+		if !asFieldError(err, &field) {
+			t.Errorf("%s: err = %v, want a field error", testCase.payload, err)
+			continue
+		}
+		if field.path != testCase.want {
+			t.Errorf("%s: path = %q, want %q", testCase.payload, field.path, testCase.want)
+		}
+	}
+}
+
+func TestResponseRoundTripsThroughJSON(t *testing.T) {
+	first := decodeAnswers(t)
+	encoded, err := json.Marshal(first)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var second SystemOneResponse
+	if err := json.Unmarshal(encoded, &second); err != nil {
+		t.Fatalf("re-decoding a marshalled response failed: %v\n%s", err, encoded)
+	}
+	if noul, ok := second.NoulOf("billing"); !ok || noul != 0.98 {
+		t.Errorf("NoulOf after round trip = %v, %v", noul, ok)
+	}
+	if choice, ok := second.ChoiceOf("tone"); !ok || choice.Choice != "angry" {
+		t.Errorf("ChoiceOf after round trip = %+v, %v", choice, ok)
+	}
+	if second.Answers["future"].Type != "rank" {
+		t.Error("the unmodelled answer did not survive the round trip")
+	}
+}
+
+func TestGroupedAccessors(t *testing.T) {
+	response := decodeAnswers(t)
+	if len(response.Nouls()) != 1 || response.Nouls()["billing"].Noul != 0.98 {
+		t.Errorf("Nouls = %+v", response.Nouls())
+	}
+	if len(response.Choices()) != 1 || response.Choices()["tone"].Choice != "angry" {
+		t.Errorf("Choices = %+v", response.Choices())
+	}
+	if len(response.Scores()) != 1 || response.Scores()["urgency"].Score != 1.7 {
+		t.Errorf("Scores = %+v", response.Scores())
+	}
+	unknown := response.Unknown()
+	if len(unknown) != 1 || unknown["future"].Type != "rank" {
+		t.Errorf("Unknown = %+v", unknown)
 	}
 }

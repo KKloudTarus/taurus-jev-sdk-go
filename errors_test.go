@@ -1,8 +1,10 @@
 package jev
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,7 +54,8 @@ func TestAPIErrorMessage(t *testing.T) {
 
 func TestConnectionErrorClassification(t *testing.T) {
 	inner := errors.New("dial tcp: connection refused")
-	err := error(&ConnectionError{Endpoint: "GET https://api.typesafe.ai/v1/models", Err: inner})
+	sanitized := &sanitizedError{message: "dial tcp: connection refused", cause: inner}
+	err := error(&ConnectionError{Endpoint: "GET https://api.typesafe.ai/v1/models", sanitized: sanitized})
 	if !errors.Is(err, ErrConnection) {
 		t.Error("not classified as a connection failure")
 	}
@@ -60,11 +63,74 @@ func TestConnectionErrorClassification(t *testing.T) {
 		t.Error("a refusal is not a timeout")
 	}
 	if !errors.Is(err, inner) {
-		t.Error("the transport error is no longer reachable")
+		t.Error("the transport error is no longer reachable by errors.Is")
 	}
-	timeout := error(&ConnectionError{Timeout: true, Err: inner})
+	timeout := error(&ConnectionError{Timeout: true, sanitized: sanitized})
 	if !errors.Is(timeout, ErrTimeout) || !errors.Is(timeout, ErrConnection) {
 		t.Error("a timeout is both a timeout and a connection failure")
+	}
+}
+
+// The chain must stop at the sanitized node: a reporter that walks Unwrap
+// cannot be allowed to reach a message that may still hold a credential.
+func TestUnwrapStopsAtTheSanitizedNode(t *testing.T) {
+	inner := errors.New("dial tcp https://sk-live-abcdef123456@host: refused")
+	err := error(&ConnectionError{
+		Endpoint:  "POST https://api.typesafe.ai/v1/systemone",
+		sanitized: &sanitizedError{message: "dial tcp https://***@host: refused", cause: inner},
+	})
+	unwrapped := errors.Unwrap(err)
+	if unwrapped == nil {
+		t.Fatal("Unwrap returned nil")
+	}
+	if strings.Contains(unwrapped.Error(), "sk-live-abcdef123456") {
+		t.Errorf("the unwrapped error leaked the credential: %v", unwrapped)
+	}
+	if errors.Unwrap(unwrapped) != nil {
+		t.Error("the chain continues past the sanitized node")
+	}
+	if !errors.Is(err, inner) {
+		t.Error("classification through the sanitized node broke")
+	}
+}
+
+func TestDeadlineErrorIsATimeout(t *testing.T) {
+	last := &APIError{Status: 429}
+	err := error(&deadlineError{cause: context.DeadlineExceeded, last: last})
+	for _, target := range []error{ErrTimeout, context.DeadlineExceeded} {
+		if !errors.Is(err, target) {
+			t.Errorf("not classified as %v", target)
+		}
+	}
+	// The failure in flight when the deadline passed stays reachable.
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+		t.Error("the last failure is no longer reachable")
+	}
+	// A cancellation is not a timeout.
+	cancelled := error(&deadlineError{cause: context.Canceled, last: last})
+	if errors.Is(cancelled, ErrTimeout) {
+		t.Error("a cancelled context reported itself as a timeout")
+	}
+	if !errors.Is(cancelled, context.Canceled) {
+		t.Error("the cancellation cause is not reachable")
+	}
+}
+
+func TestResponseValidationError(t *testing.T) {
+	err := error(&ResponseValidationError{
+		FieldPath: "answers.tone.confidence", Status: 200,
+		RequestID: "req_9", Endpoint: "POST https://api.typesafe.ai/v1/systemone",
+	})
+	if !errors.Is(err, ErrInvalidResponse) {
+		t.Error("not classified as ErrInvalidResponse")
+	}
+	var validation *ResponseValidationError
+	if !errors.As(err, &validation) || validation.FieldPath != "answers.tone.confidence" {
+		t.Errorf("field path lost: %+v", validation)
+	}
+	if !strings.Contains(err.Error(), "answers.tone.confidence") || !strings.Contains(err.Error(), "req_9") {
+		t.Errorf("Error() = %q", err.Error())
 	}
 }
 
