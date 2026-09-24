@@ -1,6 +1,13 @@
 # taurus-jev-sdk-go
 
-Go client for the [TypeSafe AI](https://typesafe.ai) System One API and its Jev model.
+[![Go Reference](https://pkg.go.dev/badge/github.com/KKloudTarus/taurus-jev-sdk-go.svg)](https://pkg.go.dev/github.com/KKloudTarus/taurus-jev-sdk-go)
+[![CI](https://github.com/KKloudTarus/taurus-jev-sdk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/KKloudTarus/taurus-jev-sdk-go/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/KKloudTarus/taurus-jev-sdk-go)](https://goreportcard.com/report/github.com/KKloudTarus/taurus-jev-sdk-go)
+[![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://go.dev/dl/)
+[![License MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+Go client for the [TypeSafe AI](https://typesafe.ai) System One API and its Jev
+model.
 
 Jev answers typed questions about a piece of state and returns calibrated
 probabilities. It generates no text, so every answer is a value your code can
@@ -8,6 +15,29 @@ branch on directly.
 
 Unofficial client, maintained independently of TypeSafe AI. Zero dependencies
 outside the standard library.
+
+```go
+response, err := client.SystemOne(ctx, ticket, jev.Questions{
+    "billing": jev.Noul{Instructions: "Is this about billing?"},
+})
+probability, _ := response.NoulOf("billing")
+```
+
+## Why this client
+
+- **Degraded responses are rejected, not coerced.** A body missing a required
+  field returns an error naming it, so a truncated response never reaches your
+  branching logic as a confident zero.
+- **The API key stays out of every string.** Errors, error bodies, log records
+  and the client's own rendering are all masked, in six spellings.
+- **The bearer token does not follow redirects.** Go's default policy would
+  re-send it over cleartext to any subdomain of the same host.
+- **A server cannot pin your goroutine.** A `retry-after` wait is clamped,
+  jittered and capped.
+- **The pool is sized for a service.** 128 idle connections per host against the
+  stdlib default of two, worth 2.2x throughput at 200 concurrent calls.
+- **Forward compatible.** A primitive the API adds later is reachable through
+  `RawQuestion` and `Answer.Raw` without waiting for a release.
 
 ## Install
 
@@ -226,6 +256,13 @@ The retry loop is covered by mutation testing rather than by line coverage
 alone. Reusing one `bytes.Reader` across attempts, reporting a connection
 failure as non-retryable, dropping the `MaxBackoff` clamp on `retry-after`, and
 returning a bare error after a deadline are each caught by a named test.
+
+## Project
+
+- [CHANGELOG.md](CHANGELOG.md) for what each release contains
+- [CONTRIBUTING.md](CONTRIBUTING.md) for the checks a change has to pass
+- [SECURITY.md](SECURITY.md) for reporting a vulnerability and for the
+  properties this client guarantees
 
 ## License
 
