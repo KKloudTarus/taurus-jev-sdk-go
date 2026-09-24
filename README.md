@@ -15,7 +15,7 @@ outside the standard library.
 go get github.com/KKloudTarus/taurus-jev-sdk-go
 ```
 
-Requires Go 1.22 or newer. The import path ends in `taurus-jev-sdk-go`; the
+Requires Go 1.22 or newer. Zero dependencies outside the standard library. The import path ends in `taurus-jev-sdk-go`; the
 package identifier is `jev`.
 
 ```go
@@ -59,17 +59,24 @@ if tone, ok := response.ChoiceOf("tone"); ok && tone.Confidence < 0.6 {
 
 ## The three question types
 
-| Type | Ask | Answer | Limit |
-|---|---|---|---|
-| `jev.Noul` | Is this statement true? | `Noul`, from 0 to 1 | yes/no |
-| `jev.Choice` | Which label applies? | `Choice`, `Probabilities`, `Confidence` | 255 labels |
-| `jev.Score` | Rate against ordered levels | `Score`, `Legend`, `Probabilities`, `Confidence` | 2 to 10 levels |
+| Type | Ask | Answer |
+|---|---|---|
+| `jev.Noul` | Is this statement true? | `Noul`, from 0 to 1 |
+| `jev.Choice` | Which label applies? | `Choice`, `Probabilities`, `Confidence` |
+| `jev.Score` | Rate against ordered levels | `Score`, `Legend`, `Probabilities`, `Confidence` |
 
 `Instructions` and every criterion accept a string, a map or a slice, so a
 question can carry structure rather than a sentence.
 
-Read an answer through `NoulOf`, `ChoiceOf` or `ScoreOf`. Each returns a second
-result reporting whether the name was answered by that primitive.
+Cardinality limits are the API's, not this client's, so a limit raised server
+side needs no SDK upgrade.
+
+Read one answer through `NoulOf`, `ChoiceOf` or `ScoreOf`, each returning a
+second result that reports whether the name was answered by that primitive. Read
+them in bulk through `Nouls()`, `Choices()`, `Scores()` and `Unknown()`.
+
+`jev.RawQuestion` sends a question shape this version does not model, for a
+primitive the API adds after this release.
 
 ## Configuration
 
@@ -117,37 +124,91 @@ Sentinels: `ErrNoAPIKey`, `ErrInvalidConfig`, `ErrInvalidRequest`,
 `ErrAuthentication`, `ErrPermissionDenied`, `ErrNotFound`,
 `ErrUnprocessableEntity`, `ErrRateLimit`, `ErrOverloaded`, `ErrInternalServer`.
 
-`APIError.RequestID` carries the `x-typesafe-request-id` header. Quote it in a
-support report.
+Detail types: `*APIError` for an unsuccessful status, `*ConnectionError` for a
+request that never got a response, and `*ResponseValidationError` for a success
+whose body did not match the schema.
+
+`RequestID` carries the `x-typesafe-request-id` header on all three. Quote it in
+a support report. `SystemOneResponse` also carries `Status`, `Header` and
+`RawBody`.
+
+## Responses are validated, not coerced
+
+A field the API documents as required is enforced. A response that omits `noul`
+would decode to `0.0` in a plain float, which reads as a maximally confident no,
+so the client returns a `*ResponseValidationError` naming the field instead:
+
+```
+jev: POST https://api.typesafe.ai/v1/systemone: invalid response data at "answers.spam.noul"
+```
+
+A body that is `null`, empty, or missing `model`, `answers` or `usage` is
+rejected the same way. A truncated or degraded response never reaches your
+branching logic as a zero value.
 
 ## Retries
 
 `DefaultRetry` retries 408, 429 and 5xx twice, plus connection failures, with
-jittered exponential backoff from 500ms to 5s under a 30s total budget. It
-honors `retry-after` and `retry-after-ms`, so a server asking for a longer wait
-than the budget allows ends the call instead of sleeping through it.
+jittered exponential backoff from 500ms to 5s under a 30s total budget.
 
-`jev.NoRetry()` sends one attempt. A cancelled context stops retrying
-immediately.
+It honors `retry-after` and `retry-after-ms`, with two bounds. The requested wait
+is clamped by `MaxBackoff`, so a hostile or misconfigured upstream cannot pin
+your goroutine for a day, and it is jittered, so a fleet handed the same
+`retry-after` does not retry in lockstep. A wait that would exhaust `Budget` ends
+the call instead of sleeping through it.
 
-## Credentials in logs and errors
+`jev.NoRetry()` sends one attempt. A cancelled or expired context stops retrying
+immediately and reports `ErrTimeout` alongside `context.DeadlineExceeded`, with
+the failure that was in flight still reachable through `errors.As`.
 
-The API key is masked in every error message and log record the client
-produces, including a transport error that echoes the `Authorization` header.
-URLs in error messages are stripped of userinfo, query and fragment.
+## Credentials
 
-`ConnectionError.Unwrap` returns the transport error unchanged so
-`errors.Is(err, context.DeadlineExceeded)` keeps working. Print the
-`ConnectionError`, not the unwrapped error.
+The API key is masked in every string this package produces: error messages,
+error bodies, log records, and the rendering of the `Client` itself under `%v`,
+`%+v`, `%#v` and `log/slog`. Masking covers the raw key, the `Bearer` form, and
+its Go-quoted, JSON-escaped and percent-encoded spellings. URLs in errors are
+stripped of userinfo, query and fragment.
+
+`ConnectionError.Unwrap` returns a sanitized node: its message is redacted and
+it has no `Unwrap` of its own, so an error reporter that walks the chain cannot
+reach the raw transport error, while `errors.Is` and `errors.As` still see
+through to it.
+
+The SDK's own HTTP client does not follow redirects. Go's default policy
+re-sends `Authorization` to any subdomain of the same host and ignores scheme
+and port, which would leak the bearer token over cleartext or to a co-hosted
+service. A client supplied through `WithHTTPClient` keeps its own policy and is
+responsible for this itself.
+
+`WithBaseURL` requires `https`, or `http` on a loopback host, and rejects a URL
+carrying credentials, a query or a fragment.
+
+## Connection pool
+
+The SDK builds its own `http.Transport` with 128 idle connections per host. The
+stdlib default is two, which forces a fresh TCP and TLS handshake on most
+requests once more than two calls are in flight. Measured against an upstream
+with a 20ms RTT at 200 concurrent calls, the default gave 1593 rps and a p50 of
+106ms; this pool gave 3509 rps and a p50 of 36.6ms.
+
+A client supplied through `WithHTTPClient` is used as given, transport included.
 
 ## Forward compatibility
 
 An answer type this version does not model does not fail the response. It
 arrives with `Known() == false` and its bytes in `Answer.Raw`, so a primitive
-added to the API later cannot break a service already in production.
+added to the API later cannot break a service already in production. Reach those
+answers through `Unknown()`.
 
-For a response shape this version does not model, `SystemOneAs[T]` decodes the
-body into your own type. `UsingExtraBody` adds top-level request fields.
+A malformed answer is rejected rather than passed through, so a broken payload
+is never mistaken for a future primitive.
+
+To send a question shape this version does not model, use `jev.RawQuestion`. For
+a response shape it does not model, `SystemOneAs[T]` decodes the body into your
+own type. `UsingExtraBody` adds top-level request fields.
+
+A decoded response round-trips through `encoding/json`, so it can be cached or
+forwarded and decoded again.
 
 ## Development
 
@@ -158,8 +219,13 @@ go vet ./...
 gofmt -l .             # must print nothing
 ```
 
-Every test runs against `httptest`, so the suite needs no API key and no
-network.
+Every test runs against `httptest` or a local listener, so the suite needs no
+API key and no network.
+
+The retry loop is covered by mutation testing rather than by line coverage
+alone. Reusing one `bytes.Reader` across attempts, reporting a connection
+failure as non-retryable, dropping the `MaxBackoff` clamp on `retry-after`, and
+returning a bare error after a deadline are each caught by a named test.
 
 ## License
 
